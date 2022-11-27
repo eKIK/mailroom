@@ -57,6 +57,7 @@ defmodule Mailroom.IMAP do
   The following options are available:
 
     - `ssl` - default `false`, connect via SSL or not
+    - `starttls` - default `:capabilities`, depend on the CAPABILITIES returned by the server. Can also be explicitly set to `true` or `false`
     - `port` - default `110` (`995` if SSL), the port to connect to
     - `timeout` - default `15_000`, the timeout for connection and communication
 
@@ -70,7 +71,7 @@ defmodule Mailroom.IMAP do
     {:ok, pid} = GenServer.start_link(__MODULE__, opts)
     GenServer.call(pid, {:connect, server, opts.port})
 
-    case login(pid, username, password) do
+    case login(pid, username, password, Map.get(opts, :starttls, :capabilities)) do
       {:ok, _msg} -> {:ok, pid}
       {:error, reason} -> {:error, :authentication, reason}
     end
@@ -90,6 +91,9 @@ defmodule Mailroom.IMAP do
   defp parse_opts([{:debug, debug} | tail], acc),
     do: parse_opts(tail, Map.put(acc, :debug, debug))
 
+  defp parse_opts([{:starttls, starttls} | tail], acc),
+    do: parse_opts(tail, Map.put(acc, :starttls, starttls))
+
   defp parse_opts([_ | tail], acc),
     do: parse_opts(tail, acc)
 
@@ -102,8 +106,8 @@ defmodule Mailroom.IMAP do
   defp set_default_port(opts),
     do: opts
 
-  defp login(pid, username, password),
-    do: GenServer.call(pid, {:login, username, password})
+  defp login(pid, username, password, starttls),
+    do: GenServer.call(pid, {:login, username, password, starttls})
 
   def select(pid, mailbox_name),
     do: GenServer.call(pid, {:select, mailbox_name}) && pid
@@ -267,18 +271,35 @@ defmodule Mailroom.IMAP do
      }}
   end
 
-  def handle_call({:login, username, password}, from, %{capability: capability} = state) do
-    if Enum.member?(capability, "STARTTLS") do
-      {:noreply,
-       send_command(from, "STARTTLS", %{state | temp: %{username: username, password: password}})}
-    else
-      {:noreply,
-       send_command(
-         from,
-         ["LOGIN", " ", quote_string(username), " ", quote_string(password)],
-         state
-       )}
+  def handle_call({:login, username, password, starttls}, from, %{capability: capability} = state) do
+    case starttls do
+      # STARTTLS hasn't been explicitly requested, use the capabilities announced by the server.
+      :capabilities ->
+        case Enum.member?(capability, "STARTTLS") do
+          true -> login_starttls()
+          false -> login_no_starttls()
+        end
+
+      true ->
+        login_starttls()
+
+      false ->
+        login_no_starttls()
     end
+  end
+
+  defp login_starttls() do
+    {:noreply,
+     send_command(from, "STARTTLS", %{state | temp: %{username: username, password: password}})}
+  end
+
+  defp login_no_starttls() do
+    {:noreply,
+     send_command(
+       from,
+       ["LOGIN", " ", quote_string(username), " ", quote_string(password)],
+       state
+     )}
   end
 
   def handle_call({:select, :inbox}, from, state),
