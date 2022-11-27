@@ -276,24 +276,24 @@ defmodule Mailroom.IMAP do
       # STARTTLS hasn't been explicitly requested, use the capabilities announced by the server.
       :capabilities ->
         case Enum.member?(capability, "STARTTLS") do
-          true -> login_starttls()
-          false -> login_no_starttls()
+          true -> login_starttls(username, password, from, state)
+          false -> login_no_starttls(username, password, from, state)
         end
 
       true ->
-        login_starttls()
+        login_starttls(username, password, from, state)
 
       false ->
-        login_no_starttls()
+        login_no_starttls(username, password, from, state)
     end
   end
 
-  defp login_starttls() do
+  defp login_starttls(username, password, from, state) do
     {:noreply,
      send_command(from, "STARTTLS", %{state | temp: %{username: username, password: password}})}
   end
 
-  defp login_no_starttls() do
+  defp login_no_starttls(username, password, from, state) do
     {:noreply,
      send_command(
        from,
